@@ -251,7 +251,8 @@ def init_skymail_client(config):
     admin_password = config.get("skymail_admin_password", "")
     proxy = config.get("proxy", "")
     domains = config.get("skymail_domains", None)
-    
+    api_base = config.get("skymail_api_base", None)
+
     if not admin_email or not admin_password:
         print("❌ 错误: 未配置 Skymail 管理员账号")
         print("   请在 config.json 中设置 skymail_admin_email 和 skymail_admin_password")
@@ -262,7 +263,7 @@ def init_skymail_client(config):
         print("   请在 config.json 中设置域名列表，例如: \"skymail_domains\": [\"admin.example.com\"]")
         sys.exit(1)
     
-    client = SkymailClient(admin_email, admin_password, proxy=proxy, domains=domains)
+    client = SkymailClient(admin_email, admin_password, proxy=proxy, domains=domains, api_base=api_base)
     
     print(f"🔑 正在生成 Skymail API Token (API: {client.api_base})...")
     print(f"📧 可用域名: {', '.join(domains)}")

@@ -2,6 +2,7 @@
     "skymail_admin_email": "admin@example.com",
     "skymail_admin_password": "your_password_here",
     "skymail_domains": [],
+    "skymail_api_base": "",
     "proxy": "http://127.0.0.1:7890",
     "output_file": "registered_accounts.txt",
     "enable_oauth": true,
