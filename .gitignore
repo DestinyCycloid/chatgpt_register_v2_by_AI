@@ -14,14 +14,12 @@ env/
 Thumbs.db
 
 config.json
+tokens/
 
 registered_accounts.txt
 accounts.txt
 ak.txt
 rk.txt
-registered_accounts.csv
-
-rename_tokens.py
 
 *.log
 *.tmp
