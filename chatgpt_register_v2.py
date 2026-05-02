@@ -44,8 +44,10 @@ def init_email_client(config):
             "base_url": config.get("worker_mail_url") or config.get("cloudmail_url", ""),
             "domains": config.get("worker_mail_domains") or config.get("cloudmail_domains") or [],
             "timeout": config.get("timeout", 30),
-            "proxy_url": config.get("proxy", ""),
+            "proxy_url": config.get("worker_mail_proxy") or config.get("proxy", ""),
             "delete_after_read": config.get("worker_mail_delete_after_read", True),
+            "require_openai_hint": config.get("worker_mail_require_openai_hint", False),
+            "excluded_codes": config.get("worker_mail_excluded_codes"),
         }
         return WorkerMailService(config=worker_cfg)
 

@@ -960,6 +960,23 @@ class WorkerMailService:
         self.proxy_url = str(cfg.get("proxy_url") or "").strip()
         self.domains = cfg.get("domains") or []
         self.delete_after_read = bool(cfg.get("delete_after_read", True))
+        self.require_openai_hint = bool(cfg.get("require_openai_hint", False))
+
+        raw_excluded = cfg.get("excluded_codes")
+        excluded: set[str] = set()
+        if isinstance(raw_excluded, str):
+            for part in raw_excluded.split(","):
+                val = part.strip()
+                if val:
+                    excluded.add(val)
+        elif isinstance(raw_excluded, (list, tuple, set)):
+            for item in raw_excluded:
+                val = str(item or "").strip()
+                if val:
+                    excluded.add(val)
+        if not excluded:
+            excluded = {"000000", "123456", "177010"}
+        self.excluded_codes = excluded
 
         self.http_client = HTTPClient(
             proxy_url=self.proxy_url or None,
@@ -1079,18 +1096,21 @@ class WorkerMailService:
         except Exception:
             return None
 
-    @staticmethod
-    def _extract_code(pattern: str, *candidates: str) -> str:
+    def _extract_code(self, pattern: str, *candidates: str) -> str:
         for item in candidates:
             text = str(item or "")
             if not text:
                 continue
-            m = re.search(pattern, text)
-            if m:
+            for m in re.finditer(pattern, text):
                 try:
-                    return str(m.group(1) or "").strip()
+                    code = str(m.group(1) or "").strip()
                 except Exception:
-                    return str(m.group(0) or "").strip()
+                    code = str(m.group(0) or "").strip()
+                if not code:
+                    continue
+                if code in self.excluded_codes:
+                    continue
+                return code
         return ""
 
     def delete_email(self, email: str, email_id: Union[int, str]) -> bool:
@@ -1158,15 +1178,20 @@ class WorkerMailService:
                     with WorkerMailService._seen_ids_lock:
                         WorkerMailService._shared_seen_email_ids[email].add(msg_id_str)
 
+                    to_email = str(item.get("to") or "").strip().lower()
+                    if to_email and to_email != str(email or "").strip().lower():
+                        continue
+
                     sender = str(item.get("from") or "").lower()
                     subject = str(item.get("subject") or "")
-                    if "openai" not in sender and "openai" not in subject.lower():
-                        continue
+                    if self.require_openai_hint:
+                        if "openai" not in sender and "openai" not in subject.lower():
+                            continue
 
                     text_body = str(item.get("text") or "")
                     html_body = str(item.get("html") or "")
                     html_clean = re.sub(r"<[^>]+>", " ", html_body)
-                    code = self._extract_code(pattern, subject, text_body, html_clean)
+                    code = self._extract_code(pattern, html_body, html_clean, text_body, subject)
                     if code:
                         if self.delete_after_read:
                             self.delete_email(email, msg_id_str)

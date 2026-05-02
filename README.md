@@ -105,6 +105,9 @@ pip install curl_cffi
     "worker_mail_url": "",
     "worker_mail_domains": [],
     "worker_mail_delete_after_read": true,
+    "worker_mail_proxy": "",
+    "worker_mail_require_openai_hint": false,
+    "worker_mail_excluded_codes": ["000000", "123456", "177010"],
     "proxy": "http://127.0.0.1:7890",
     "output_file": "registered_accounts.txt",
     "enable_oauth": true,
@@ -125,6 +128,9 @@ pip install curl_cffi
 7. **token_json_dir**：Token JSON 文件保存目录
 8. **email_service**：邮箱服务类型（`cloudmail` 或 `workermail`）
 9. **worker_mail_url / worker_mail_domains**：自建 Cloudflare Workers 临时邮箱服务地址与域名列表（留空会尝试从 `/api/domains` 获取）
+10. **worker_mail_proxy**：自建邮箱服务请求代理地址（可与 **proxy** 分开配置，支持 `http://user:pass@host:port`）
+11. **worker_mail_excluded_codes**：验证码排除列表（默认排除 `000000`、`123456`、`177010`）
+12. **worker_mail_require_openai_hint**：是否仅处理包含 openai 线索的邮件（默认关闭）
 
 ## 使用方法
 
