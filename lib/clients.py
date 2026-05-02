@@ -23,7 +23,12 @@ from typing import Optional, Dict, Any, Union, Tuple, List, Set
 from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta
 
-import requests
+try:
+    import requests
+    _requests_exception = requests.RequestException
+except Exception:
+    requests = None
+    _requests_exception = Exception
 from curl_cffi import requests as cffi_requests
 from curl_cffi.requests import Session, Response
 
@@ -501,8 +506,22 @@ class CloudMailService:
             domain = self._extract_domain_from_url(self.config["base_url"])
             self.config["admin_email"] = f"admin@{domain}"
 
-        # 创建 requests session
-        self.session = requests.Session()
+        proxy_url = self.config.get("proxy_url")
+        proxies = None
+        if proxy_url:
+            proxies = {"http": proxy_url, "https": proxy_url}
+
+        if requests is not None:
+            self.session = requests.Session()
+            if proxies:
+                self.session.proxies.update(proxies)
+        else:
+            self.session = cffi_requests.Session(
+                proxies=proxies,
+                impersonate="chrome",
+                verify=True,
+                timeout=self.config["timeout"],
+            )
         self.session.headers.update({
             "Accept": "application/json",
             "Content-Type": "application/json",
@@ -527,7 +546,7 @@ class CloudMailService:
             提取的域名，如 ukumbuko.us.ci
         """
 
-        parsed = urlparse(url)
+        parsed = urllib.parse.urlparse(url)
         domain = parsed.netloc or parsed.path.split('/')[0]
         if not domain:
             raise ValueError(f"无法从 URL 提取域名: {url}")
@@ -575,7 +594,7 @@ class CloudMailService:
 
             return token
 
-        except requests.RequestException as e:
+        except _requests_exception as e:
             self.update_status(False, e)
             raise EmailServiceError(f"生成 token 失败: {e}")
         except Exception as e:
@@ -672,7 +691,7 @@ class CloudMailService:
             except Exception:
                 return {"raw_response": response.text}
 
-        except requests.RequestException as e:
+        except _requests_exception as e:
             self.update_status(False, e)
             raise EmailServiceError(f"请求失败: {method} {path} - {e}")
         except Exception as e:
@@ -923,6 +942,243 @@ class CloudMailService:
 
     def __str__(self) -> str:
         return f"{self.name} ({self.service_type.value})"
+
+
+class WorkerMailService:
+    _seen_ids_lock = threading.Lock()
+    _shared_seen_email_ids: Dict[str, set] = {}
+
+    def __init__(self, config: Dict[str, Any] = None, name: str = None):
+        self.service_type = EmailServiceType.WORKERMAIL
+        self.name = name or f"{EmailServiceType.WORKERMAIL.value}_service"
+        self._status = EmailServiceStatus.HEALTHY
+        self._last_error = None
+
+        cfg = config or {}
+        self.base_url = str(cfg.get("base_url") or "").rstrip("/")
+        self.timeout = int(cfg.get("timeout") or 30)
+        self.proxy_url = str(cfg.get("proxy_url") or "").strip()
+        self.domains = cfg.get("domains") or []
+        self.delete_after_read = bool(cfg.get("delete_after_read", True))
+
+        self.http_client = HTTPClient(
+            proxy_url=self.proxy_url or None,
+            config=RequestConfig(timeout=self.timeout),
+        )
+
+    @property
+    def status(self) -> EmailServiceStatus:
+        return self._status
+
+    @property
+    def last_error(self) -> Optional[str]:
+        return self._last_error
+
+    def update_status(self, success: bool, error: Exception = None):
+        if success:
+            self._status = EmailServiceStatus.HEALTHY
+            self._last_error = None
+        else:
+            self._status = EmailServiceStatus.DEGRADED
+            if error:
+                self._last_error = str(error)
+
+    def _url(self, path: str) -> str:
+        base = self.base_url
+        if not base:
+            raise EmailServiceError("未配置 worker 邮箱服务 base_url")
+        return f"{base}/{str(path or '').lstrip('/')}"
+
+    def _request_json(self, method: str, path: str) -> Dict[str, Any]:
+        resp = self.http_client.request(
+            method=method,
+            url=self._url(path),
+            headers={"accept": "application/json"},
+        )
+        try:
+            return resp.json() or {}
+        except Exception:
+            text = getattr(resp, "text", "")
+            raise EmailServiceError(f"解析邮箱服务响应失败: {text[:200]}")
+
+    def list_domains(self) -> List[str]:
+        payload = self._request_json("GET", "/api/domains")
+        if not isinstance(payload, dict) or not payload.get("success"):
+            return []
+        domains = payload.get("domains") or []
+        result: list[str] = []
+        if isinstance(domains, list):
+            for item in domains:
+                if isinstance(item, dict):
+                    name = str(item.get("name") or "").strip()
+                    if name:
+                        result.append(name)
+        return result
+
+    @staticmethod
+    def _random_prefix(length: int = 10) -> str:
+        length = max(6, int(length or 10))
+        alphabet = string.ascii_lowercase + string.digits
+        return "".join(secrets.choice(alphabet) for _ in range(length))
+
+    @staticmethod
+    def _extract_domain_from_url(url: str) -> str:
+        try:
+            parsed = urllib.parse.urlparse(url)
+            host = str(parsed.hostname or "").strip().lower()
+            if host.startswith("www."):
+                host = host[4:]
+            return host
+        except Exception:
+            return ""
+
+    def create_email(self, config: Dict[str, Any] = None) -> Dict[str, Any]:
+        req_cfg = config or {}
+        prefix = str(req_cfg.get("name") or "").strip() or self._random_prefix()
+
+        domain = str(req_cfg.get("domain") or "").strip()
+        if not domain:
+            domain_cfg = req_cfg.get("domains") or self.domains
+            if isinstance(domain_cfg, list) and domain_cfg:
+                domain = str(random.choice(domain_cfg) or "").strip()
+            elif isinstance(domain_cfg, str) and domain_cfg.strip():
+                domain = domain_cfg.strip()
+
+        if not domain:
+            discovered = self.list_domains()
+            if discovered:
+                domain = random.choice(discovered)
+
+        if not domain:
+            domain = self._extract_domain_from_url(self.base_url)
+
+        if not domain:
+            raise EmailServiceError("未获取到可用域名")
+
+        email_address = f"{prefix}@{domain}".lower()
+        email_info = {
+            "email": email_address,
+            "service_id": email_address,
+            "id": email_address,
+            "created_at": time.time(),
+        }
+        self.update_status(True)
+        return email_info
+
+    @staticmethod
+    def _parse_email_date(value: str) -> Optional[datetime]:
+        text = str(value or "").strip()
+        if not text:
+            return None
+        try:
+            text = text.replace("Z", "+00:00")
+            dt = datetime.fromisoformat(text)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return dt.astimezone(timezone.utc)
+        except Exception:
+            return None
+
+    @staticmethod
+    def _extract_code(pattern: str, *candidates: str) -> str:
+        for item in candidates:
+            text = str(item or "")
+            if not text:
+                continue
+            m = re.search(pattern, text)
+            if m:
+                try:
+                    return str(m.group(1) or "").strip()
+                except Exception:
+                    return str(m.group(0) or "").strip()
+        return ""
+
+    def delete_email(self, email: str, email_id: Union[int, str]) -> bool:
+        try:
+            payload = self._request_json("DELETE", f"/api/emails/{urllib.parse.quote(str(email))}/{urllib.parse.quote(str(email_id))}")
+            if isinstance(payload, dict):
+                if payload.get("success") is True:
+                    return True
+                if payload.get("ok") is True:
+                    return True
+            return False
+        except Exception:
+            return False
+
+    def get_verification_code(
+        self,
+        email: str,
+        email_id: str = None,
+        timeout: int = 120,
+        pattern: str = OTP_CODE_PATTERN,
+        otp_sent_at: Optional[float] = None,
+    ) -> Optional[str]:
+        start_time = time.time()
+
+        initial_seen_ids = set()
+        with WorkerMailService._seen_ids_lock:
+            if email not in WorkerMailService._shared_seen_email_ids:
+                WorkerMailService._shared_seen_email_ids[email] = set()
+            else:
+                initial_seen_ids = WorkerMailService._shared_seen_email_ids[email].copy()
+
+        current_seen_ids = set()
+        sent_dt = None
+        if otp_sent_at:
+            try:
+                sent_dt = datetime.fromtimestamp(float(otp_sent_at), tz=timezone.utc)
+            except Exception:
+                sent_dt = None
+
+        while time.time() - start_time < timeout:
+            try:
+                payload = self._request_json("GET", f"/api/emails/{urllib.parse.quote(str(email))}")
+                emails = payload.get("emails") if isinstance(payload, dict) else None
+                if not isinstance(emails, list):
+                    time.sleep(3)
+                    continue
+
+                for item in emails:
+                    if not isinstance(item, dict):
+                        continue
+
+                    msg_id = item.get("id")
+                    if msg_id is None:
+                        continue
+
+                    msg_id_str = str(msg_id)
+                    if msg_id_str in initial_seen_ids or msg_id_str in current_seen_ids:
+                        continue
+
+                    msg_date = self._parse_email_date(item.get("date"))
+                    if sent_dt and msg_date and msg_date < sent_dt:
+                        continue
+
+                    current_seen_ids.add(msg_id_str)
+                    with WorkerMailService._seen_ids_lock:
+                        WorkerMailService._shared_seen_email_ids[email].add(msg_id_str)
+
+                    sender = str(item.get("from") or "").lower()
+                    subject = str(item.get("subject") or "")
+                    if "openai" not in sender and "openai" not in subject.lower():
+                        continue
+
+                    text_body = str(item.get("text") or "")
+                    html_body = str(item.get("html") or "")
+                    html_clean = re.sub(r"<[^>]+>", " ", html_body)
+                    code = self._extract_code(pattern, subject, text_body, html_clean)
+                    if code:
+                        if self.delete_after_read:
+                            self.delete_email(email, msg_id_str)
+                        self.update_status(True)
+                        return code
+
+            except Exception as e:
+                self.update_status(False, e)
+
+            time.sleep(3)
+
+        return None
 
 
 """

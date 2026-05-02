@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 class EmailOperations:
     """邮箱操作类"""
     
-    def __init__(self, email_service: CloudMailService, log_callback):
+    def __init__(self, email_service: Any, log_callback):
         self.email_service = email_service
         self._log = log_callback
         self.email: Optional[str] = None
@@ -59,7 +59,7 @@ class EmailOperations:
 class OTPOperations:
     """OTP 验证码操作类"""
     
-    def __init__(self, engine, email_service: CloudMailService, log_callback):
+    def __init__(self, engine, email_service: Any, log_callback):
         self.engine = engine  # 主引擎引用
         self.email_service = email_service
         self._log = log_callback
@@ -1351,7 +1351,7 @@ class RegistrationEngine:
 
     def __init__(
         self,
-        email_service: CloudMailService,
+        email_service: Any,
         proxy_url: Optional[str] = None,
         callback_logger: Optional[Callable[[str], None]] = None,
         task_uuid: Optional[str] = None
@@ -1836,4 +1836,3 @@ class RegistrationEngine:
             "has_access_token": bool(result.access_token),
             "has_refresh_token": bool(result.refresh_token),
         }
-

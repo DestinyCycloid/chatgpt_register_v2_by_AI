@@ -33,6 +33,7 @@ logger = logging.getLogger(__name__)
 class EmailServiceType(str, Enum):
     """邮箱服务类型"""
     CLOUDMAIL = "cloudmail"
+    WORKERMAIL = "workermail"
 
 
 

@@ -22,17 +22,33 @@ warnings.filterwarnings('ignore', message='Unverified HTTPS request')
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 # 导入自定义模块
-from lib.utils import load_config, as_bool
+from lib.utils import load_config, as_bool, EmailServiceType
 from lib.clients import TokenManager
 
 # 导入引擎模块
 from lib.core import RegistrationEngine
-from lib.clients import CloudMailService
+from lib.clients import CloudMailService, WorkerMailService
 
 # 全局文件写入锁
 _file_lock = threading.Lock()
 
-def init_cloudmail_client(config):
+def init_email_client(config):
+    service = str(
+        config.get("email_service")
+        or config.get("email_service_type")
+        or EmailServiceType.CLOUDMAIL.value
+    ).strip().lower()
+
+    if service in ("worker", "workermail", "cloudflare_worker", "cf_worker"):
+        worker_cfg = {
+            "base_url": config.get("worker_mail_url") or config.get("cloudmail_url", ""),
+            "domains": config.get("worker_mail_domains") or config.get("cloudmail_domains") or [],
+            "timeout": config.get("timeout", 30),
+            "proxy_url": config.get("proxy", ""),
+            "delete_after_read": config.get("worker_mail_delete_after_read", True),
+        }
+        return WorkerMailService(config=worker_cfg)
+
     cloud_mail_config = {
         "base_url": config.get("cloudmail_url", ""),
         "admin_email": config.get("cloudmail_admin_email", ""),
@@ -40,7 +56,7 @@ def init_cloudmail_client(config):
         "domain": config.get("cloudmail_domains", []),
         "subdomain": config.get("cloudmail_subdomain", ""),
         "timeout": config.get("timeout", 30),
-        "proxy_url": config.get("proxy", "")
+        "proxy_url": config.get("proxy", ""),
     }
     return CloudMailService(config=cloud_mail_config)
 
@@ -161,8 +177,8 @@ def main():
     if args.no_oauth:
         config['enable_oauth'] = False
     
-    # 初始化 CloudMail 客户端
-    cloudmail_client = init_cloudmail_client(config)
+    # 初始化邮箱客户端
+    cloudmail_client = init_email_client(config)
     
     # 初始化 Token 管理器
     token_manager = TokenManager(config)

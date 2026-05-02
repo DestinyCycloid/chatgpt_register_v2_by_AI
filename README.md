@@ -101,6 +101,10 @@ pip install curl_cffi
     "cloudmail_admin_password": "your_password",
     "cloudmail_domains": ["domain1.com", "domain2.com"],
     "cloudmail_subdomain": "",
+    "email_service": "cloudmail",
+    "worker_mail_url": "",
+    "worker_mail_domains": [],
+    "worker_mail_delete_after_read": true,
     "proxy": "http://127.0.0.1:7890",
     "output_file": "registered_accounts.txt",
     "enable_oauth": true,
@@ -119,6 +123,8 @@ pip install curl_cffi
 5. **enable_oauth**：是否启用 OAuth 登录
 6. **oauth_required**：OAuth 失败时是否视为注册失败
 7. **token_json_dir**：Token JSON 文件保存目录
+8. **email_service**：邮箱服务类型（`cloudmail` 或 `workermail`）
+9. **worker_mail_url / worker_mail_domains**：自建 Cloudflare Workers 临时邮箱服务地址与域名列表（留空会尝试从 `/api/domains` 获取）
 
 ## 使用方法
 
